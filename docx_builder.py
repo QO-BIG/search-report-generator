@@ -71,7 +71,7 @@ INTENDED_LABEL = "The intended {kind} for application by the Applicant are as fo
 MARK_HEADING_SUFFIX = " & RELATED CLASS(ES)"
 LEAD_IN = "We found these prior marks that are similar to the subject mark."
 TABLE_HEADERS = ["No.", "Mark", "Application No.", "Class", "Status", "Similarity of Goods / Services"]
-TABLE_GRID = [570, 2549, 1843, 992, 1843, 1203]
+TABLE_GRID = [680, 2468, 1843, 992, 1843, 1203]  # = the text width (9029), so both page margins match
 ATTACH = "We attach herewith a copy of the printout of the prior marks above for your retention."
 OPINION_CLOSE = ("Notwithstanding the above opinion, the decision to accept or to reject the application "
                  "ultimately lies within the discretion of the Registrar. Please be advised that in the "
@@ -485,17 +485,28 @@ class Builder:
         self.blank()
 
     def _restarted_num(self, num_id: int) -> int:
-        """A new list instance of num_id's definition that starts again at 1 (one per table)."""
+        """A separate copy of num_id's list, so each table counts from 1.
+
+        (A startOverride on a shared list makes Word's PDF export restart the count
+        at the page break, so each table gets its own list definition instead.)
+        """
         numbering = self.doc.part.numbering_part.element
         base = next(n for n in numbering.num_lst if n.numId == num_id)
-        num = numbering.add_num(base.abstractNumId.val)
-        num.add_lvlOverride(ilvl=0).add_startOverride(1)
-        return num.numId
+        abstracts = numbering.findall(qn("w:abstractNum"))
+        src = next(a for a in abstracts if a.get(qn("w:abstractNumId")) == str(base.abstractNumId.val))
+        new_id = max(int(a.get(qn("w:abstractNumId"))) for a in abstracts) + 1
+        abstract = copy.deepcopy(src)
+        abstract.set(qn("w:abstractNumId"), str(new_id))
+        nsid = abstract.find(qn("w:nsid"))
+        if nsid is not None:
+            nsid.set(qn("w:val"), f"{0x5E000000 + new_id:08X}")
+        abstracts[-1].addnext(abstract)  # abstractNums must precede the nums
+        return numbering.add_num(new_id).numId
 
     def marks_table(self, rows: list[TableRow]):
         grid = TABLE_GRID
         num_id = self._restarted_num(NUM_TABLE)
-        tbl = self._table(grid, width=sum(grid), ind=108, fixed=True)
+        tbl = self._table(grid, width=sum(grid), fixed=True, center=True)
         row = self._row(tbl, grid, header=True)
         for i, (cell, h) in enumerate(zip(row.cells, TABLE_HEADERS)):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -519,7 +530,7 @@ class Builder:
                     self._numbered(p, num_id)
                     p = self._cell_p(cells[1], before=2, after=2)
                     if tr.image_png:
-                        self._picture(p, tr.image_png, 1.22, 0.6)
+                        self._picture(p, tr.image_png, 1.22, 0.72)  # as staff size them: wide ~1.2", logos ~0.7"
                     else:
                         self._run(p, tr.mark_text)
                     p = self._cell_p(cells[4])
