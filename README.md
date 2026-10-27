@@ -14,7 +14,7 @@ A small web app for Quality Oracle staff. Type the client and mark details, uplo
 | Prior-marks table: mark image, application no., class, status | read from the Prior Marks PDF |
 | Signature | app secrets (`SIGNATURE_PNG_BASE64`) |
 
-Left for staff to write in Word: the summary table, the Part I analysis, each Opinion and the
+Left for staff to write in Word: the summary table (only its Class column is filled), the Part I analysis, each Opinion and the
 Similarity column. Red lines in the report show where to write; delete them afterwards.
 
 With several classes, the report has one prior-marks table and Opinion per class (as in past

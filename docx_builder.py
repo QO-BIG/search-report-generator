@@ -72,6 +72,8 @@ MARK_HEADING_SUFFIX = " & RELATED CLASS(ES)"
 LEAD_IN = "We found these prior marks that are similar to the subject mark."
 TABLE_HEADERS = ["No.", "Mark", "Application No.", "Class", "Status", "Similarity of Goods / Services"]
 TABLE_GRID = [680, 2468, 1843, 992, 1843, 1203]  # = the text width (9029), so both page margins match
+ROW_HEIGHT = 1152  # 0.8" per mark (twips, minimum)
+IMAGE_BOX = (1.22, 0.64)  # max width/height of a mark image in inches, leaving even space in the row
 ATTACH = "We attach herewith a copy of the printout of the prior marks above for your retention."
 OPINION_CLOSE = ("Notwithstanding the above opinion, the decision to accept or to reject the application "
                  "ultimately lies within the discretion of the Registrar. Please be advised that in the "
@@ -406,22 +408,21 @@ class Builder:
         self.text(INTRO)
         p = self._new_p(line=1.15, before=6)
         self._run(p, SUMMARY_LABEL)
-        # one class: as the template; several classes: a Class column and one row per class (as past reports)
-        multi = len(self.d.classes) > 1
-        grid = [1129, 2971, 2774, 2145] if multi else [2977, 2835, 2191]
-        headers = (["Class"] if multi else []) + SUMMARY_HEADERS
-        tbl = self._table(grid, center=True, ind=0)
+        # a Class column with one row per searched class; the assessment cells are left for staff
+        grid = [1129, 2971, 2774, 2145]
+        headers = ["Class"] + SUMMARY_HEADERS
+        tbl = self._table(grid, center=True)
         row = self._row(tbl, grid, header=True)
         for cell, h in zip(row.cells, headers):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
             p = self._cell_p(cell, before=3, after=3)
             self._run(p, h, bold=True)
-        for c in self.d.classes if multi else [None]:
-            row = self._row(tbl, grid, height=500)  # assessment cells are left empty for staff
+        for c in self.d.classes:
+            row = self._row(tbl, grid, height=500)
             for i, cell in enumerate(row.cells):
                 cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
                 p = self._cell_p(cell, before=3, after=3)
-                if multi and i == 0:
+                if i == 0:
                     self._run(p, class_no(c))
         self.text(FOOTNOTE, bold=True, italic=True)
         self._new_p()
@@ -497,6 +498,14 @@ class Builder:
         new_id = max(int(a.get(qn("w:abstractNumId"))) for a in abstracts) + 1
         abstract = copy.deepcopy(src)
         abstract.set(qn("w:abstractNumId"), str(new_id))
+        # level 1 without indent or trailing tab, so the number can be centred in its cell
+        lvl = abstract.find(qn("w:lvl"))
+        suff = OxmlElement("w:suff")
+        suff.set(qn("w:val"), "nothing")
+        lvl.find(qn("w:lvlText")).addprevious(suff)
+        ind = lvl.find(qn("w:pPr")).find(qn("w:ind"))
+        ind.set(qn("w:left"), "0")
+        ind.set(qn("w:hanging"), "0")
         nsid = abstract.find(qn("w:nsid"))
         if nsid is not None:
             nsid.set(qn("w:val"), f"{0x5E000000 + new_id:08X}")
@@ -508,17 +517,18 @@ class Builder:
         num_id = self._restarted_num(NUM_TABLE)
         tbl = self._table(grid, width=sum(grid), fixed=True, center=True)
         row = self._row(tbl, grid, header=True)
-        for i, (cell, h) in enumerate(zip(row.cells, TABLE_HEADERS)):
+        for cell, h in zip(row.cells, TABLE_HEADERS):
             cell.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
-            p = self._cell_p(cell, jc="center" if i in (4, 5) else "both")
+            p = self._cell_p(cell)
             # the long "Similarity of Goods / Services" header is 11 pt in the template
             self._run(p, h, bold=True, size=11 if len(h) > 20 else None)
 
+        # every mark gets the same row height (split over the lines of a merged group), so the
+        # space around each logo is the same; rows only grow for long class lists
         for tr in rows or [TableRow(numbers=[], classes=[], status="")]:
             n = max(1, len(tr.numbers))
             for k in range(n):
-                height = (624 if tr.image_png else 397) if n == 1 else 390
-                row = self._row(tbl, grid, height=height)
+                row = self._row(tbl, grid, height=ROW_HEIGHT // n)
                 cells = row.cells
                 for c in cells:
                     c.vertical_alignment = WD_CELL_VERTICAL_ALIGNMENT.CENTER
@@ -526,11 +536,11 @@ class Builder:
                     for ci in (0, 1, 4, 5):
                         self._vmerge(cells[ci], restart=(k == 0))
                 if k == 0:
-                    p = self._cell_p(cells[0], jc="both")
+                    p = self._cell_p(cells[0])
                     self._numbered(p, num_id)
-                    p = self._cell_p(cells[1], before=2, after=2)
+                    p = self._cell_p(cells[1])
                     if tr.image_png:
-                        self._picture(p, tr.image_png, 1.22, 0.72)  # as staff size them: wide ~1.2", logos ~0.7"
+                        self._picture(p, tr.image_png, *IMAGE_BOX)
                     else:
                         self._run(p, tr.mark_text)
                     p = self._cell_p(cells[4])
@@ -539,7 +549,6 @@ class Builder:
                 p = self._cell_p(cells[2])
                 self._run(p, tr.numbers[k] if tr.numbers else "")
                 p = self._cell_p(cells[3])
-                p.paragraph_format.right_indent = Emu(-112 * 635)
                 self._run(p, tr.classes[k] if k < len(tr.classes) else "")
                 if k < n - 1:  # keep a merged group on one page
                     for c in cells:
