@@ -1,0 +1,5 @@
+streamlit==1.59.1
+pymupdf==1.28.0
+python-docx==1.2.0
+pillow==12.3.0
+pandas
