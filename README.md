@@ -1,7 +1,7 @@
 # Search Report Generator
 
 A small web app for Quality Oracle staff. Type the client and mark details, upload the MyIPO
-"Prior Marks" PDF, and download the Search Report as an editable Word file
+"Prior Marks" PDF for each class searched, and download the Search Report as an editable Word file
 (`[MY] Search Report - <mark>.docx`).
 
 ## What the app fills in
@@ -17,8 +17,9 @@ A small web app for Quality Oracle staff. Type the client and mark details, uplo
 Left for staff to write in Word: the summary table (only its Class column is filled), the Part I analysis, each Opinion and the
 Similarity column. Red lines in the report show where to write; delete them afterwards.
 
-With several classes, the report has one prior-marks table and Opinion per class (as in past
-reports). In the app, tick which class table(s) each mark goes into.
+Each searched class has its own Prior Marks PDF, uploaded below that class's intended goods.
+The report has one prior-marks table and Opinion per class (as in past reports), filled from
+that class's PDF. If the PDFs have different print dates, the earliest is used.
 
 ## Files
 - `app.py` – the Streamlit app (password gate, inputs, prior-marks review, download).

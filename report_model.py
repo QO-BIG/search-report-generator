@@ -2,19 +2,14 @@
 
 The UI keeps one "selection" row per parsed record:
     {"include": bool, "group": int, "app_no": str, "mark": str, "classes": str, "status": str,
-     "in_<class>": bool}   (one key per searched class, only used when several classes are searched)
+     "flag": str}
+There is one selection per searched class (each class has its own Prior Marks PDF).
 Included records sharing a group number become one (merged) table row.
 """
 from __future__ import annotations
 
-import re
-
 from docx_builder import TableRow
 from parser import PriorMark, suggest_groups
-
-
-def in_key(cls: int) -> str:
-    return f"in_{cls}"
 
 
 def initial_selection(records: list[PriorMark]) -> list[dict]:
@@ -25,23 +20,6 @@ def initial_selection(records: list[PriorMark]) -> list[dict]:
          "flag": "status?" if r.status_flagged else ""}
         for r, g in zip(records, groups)
     ]
-
-
-def _mark_classes(text: str) -> set[int]:
-    return {int(n) for n in re.findall(r"\d+", text or "")}
-
-
-def ensure_class_keys(selection: list[dict], classes: list[int]) -> list[dict]:
-    """Add an 'in Class X table' tick for every searched class.
-
-    Default: a mark filed in one of the searched classes goes into that class's table;
-    a mark in none of them (a related class) goes into every table, for staff to untick.
-    """
-    out = []
-    for s in selection:
-        own = _mark_classes(s.get("classes", "")) & set(classes)
-        out.append({**s, **{in_key(c): s.get(in_key(c), (c in own) if own else True) for c in classes}})
-    return out
 
 
 def grouped(records: list[PriorMark], selection: list[dict]) -> list[list[tuple[PriorMark, dict]]]:
@@ -59,12 +37,10 @@ def grouped(records: list[PriorMark], selection: list[dict]) -> list[list[tuple[
     return [buckets[g] for g in order]
 
 
-def table_rows(records: list[PriorMark], selection: list[dict], cls: int | None = None) -> list[TableRow]:
-    """Rows of the prior-marks table (for one searched class when cls is given)."""
+def table_rows(records: list[PriorMark], selection: list[dict]) -> list[TableRow]:
+    """Rows of the prior-marks table."""
     rows = []
     for members in grouped(records, selection):
-        if cls is not None and not any(s.get(in_key(cls), True) for _, s in members):
-            continue
         first_rec, first_sel = members[0]
         rows.append(TableRow(
             numbers=[s["app_no"] for _, s in members],

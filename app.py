@@ -21,7 +21,7 @@ from PIL import Image
 
 from docx_builder import ClassSection, ReportData, build_report, class_no, report_filename
 from parser import ParseError, parse_prior_marks
-from report_model import ensure_class_keys, in_key, initial_selection, salutation_from_attention, table_rows
+from report_model import initial_selection, salutation_from_attention, table_rows
 
 st.set_page_config(page_title="Search Report Generator", page_icon="📄", layout="wide")
 S = st.session_state
@@ -80,12 +80,30 @@ def parse_classes(text: str) -> list[int]:
     return sorted({int(n) for n in re.findall(r"\d+", text) if 1 <= int(n) <= 45})
 
 
-def selection_df(selection: list[dict], records, classes: list[int]) -> pd.DataFrame:
-    multi = len(classes) > 1
-    df = pd.DataFrame(ensure_class_keys(selection, classes) if multi else selection)
+def selection_df(selection: list[dict], records) -> pd.DataFrame:
+    df = pd.DataFrame(selection)
     df.insert(1, "preview", [thumb_data_url(None if r.is_word_mark else r.image_png) for r in records])
-    cols = ["include", "preview", "group", "app_no", "mark", "classes", "status"]
-    return df[cols + ([in_key(c) for c in classes] if multi else []) + ["flag"]]
+    return df[["include", "preview", "group", "app_no", "mark", "classes", "status", "flag"]]
+
+
+def load_prior_marks(c: int, pdf) -> None:
+    """Parse the Prior Marks PDF uploaded for class c (once per file); state is kept per class."""
+    if pdf is None:
+        for k in ("pdf_digest", "parsed", "selection"):
+            S.pop(f"{k}_{c}", None)
+        return
+    digest = hashlib.sha256(pdf.getvalue()).hexdigest()
+    if S.get(f"pdf_digest_{c}") == digest:
+        return
+    try:
+        parsed = parse_prior_marks(pdf.getvalue())
+    except ParseError as exc:
+        st.error(f"Could not read the Prior Marks PDF for Class {class_no(c)}: {exc}")
+        return
+    S[f"pdf_digest_{c}"] = digest
+    S[f"parsed_{c}"] = parsed
+    S[f"selection_{c}"] = initial_selection(parsed.records)
+    S[f"editor_version_{c}"] = S.get(f"editor_version_{c}", 0) + 1
 
 
 def signature_png() -> bytes | None:
@@ -96,7 +114,7 @@ def signature_png() -> bytes | None:
 
 # ----------------------------------------------------------------- page
 st.title("Search Report Generator")
-st.caption("Fill in the details, upload the Prior Marks PDF, download the Word report. "
+st.caption("Fill in the details, upload the Prior Marks PDF for each class, download the Word report. "
            "Nothing is stored; refresh the page to clear.")
 
 # ---------------- Step 1
@@ -128,80 +146,76 @@ with c2:
     for c in classes:
         intended_goods[c] = st.text_area(f"Intended goods/services – Class {class_no(c)}", key=f"goods_{c}",
                                          height=90)
+        load_prior_marks(c, st.file_uploader(f"Prior Marks PDF – Class {class_no(c)}", type=["pdf"],
+                                             key=f"pdf_{c}"))
 
 # ---------------- Step 2
 st.header("2 · Prior marks")
-pdf = st.file_uploader("Prior Marks PDF (MyIPO printout)", type=["pdf"])
-if pdf is not None:
-    digest = hashlib.sha256(pdf.getvalue()).hexdigest()
-    if S.get("pdf_digest") != digest:
-        try:
-            parsed = parse_prior_marks(pdf.getvalue())
-        except ParseError as exc:
-            st.error(f"Could not read the Prior Marks PDF: {exc}")
-            st.stop()
-        S.pdf_digest = digest
-        S.parsed = parsed
-        S.selection = initial_selection(parsed.records)
-        S.editor_version = S.get("editor_version", 0) + 1
-else:
-    for k in ("pdf_digest", "parsed", "selection", "docx_bytes"):
-        S.pop(k, None)
-
-if "parsed" not in S:
-    st.info("Upload the Prior Marks PDF to continue.")
+if not classes:
+    st.info("Enter the class(es) searched, then upload the Prior Marks PDF for each class.")
+    st.stop()
+loaded = [c for c in classes if f"parsed_{c}" in S]
+if not loaded:
+    st.info("Upload the Prior Marks PDF for each class (below its intended goods).")
     st.stop()
 
-parsed = S.parsed
-records = parsed.records
-search_date = st.date_input("Search date (taken from 'Date Printed' in the PDF)",
-                            value=parsed.search_date or date.today(), format="DD/MM/YYYY")
-for w in parsed.warnings:
-    st.warning(w)
+# all PDFs normally share one print date; if not, the earliest is used
+printed = [S[f"parsed_{c}"].search_date for c in loaded if S[f"parsed_{c}"].search_date]
+search_date = st.date_input("Search date (taken from 'Date Printed' in the PDFs)",
+                            value=min(printed) if printed else date.today(), format="DD/MM/YYYY")
+if len(set(printed)) > 1:
+    st.warning("The PDFs have different print dates; the earliest is used. Change it above if needed.")
+st.caption("Untick **Include** to leave a mark out. Marks with the same **Group** number share one merged "
+           "table row (a series of the same mark). You can correct the Status if needed.")
 
-multi = len(classes) > 1
-st.caption(f"{len(records)} prior marks found. Untick **Include** to leave a mark out. "
-           "Marks with the same **Group** number share one merged table row (a series of the same mark). "
-           "You can correct the Status if needed."
-           + (" With several classes, tick which class table(s) each mark goes into." if multi else ""))
-# the editor's base frame only changes on purpose (new PDF / classes); user edits live in the widget state
-base_version = (S.get("editor_version", 0), tuple(classes))
-if S.get("sel_base_version") != base_version:
-    S.sel_base = selection_df(S.selection, records, classes)
-    S.sel_base_version = base_version
-edited = st.data_editor(
-    S.sel_base,
-    key=f"sel_editor_{S.get('editor_version', 0)}_{'_'.join(map(str, classes))}",
-    hide_index=True,
-    width="stretch",
-    disabled=["preview", "app_no", "mark", "classes", "flag"],
-    column_config={
-        "include": st.column_config.CheckboxColumn("Include", width="small"),
-        "preview": st.column_config.ImageColumn("Mark", width="small"),
-        "group": st.column_config.NumberColumn("Group", min_value=1, step=1, width="small"),
-        "app_no": "Application No.",
-        "mark": "Name",
-        "classes": "Class",
-        "status": "Status",
-        **{in_key(c): st.column_config.CheckboxColumn(f"In Class {class_no(c)} table", width="small")
-           for c in classes},
-        "flag": "Check",
-    },
-)
-S.selection = [
-    {k: (int(v) if k == "group" and pd.notna(v) else v) for k, v in row.items() if k != "preview"}
-    for row in edited.to_dict("records")
-]
+for c in classes:
+    st.subheader(f"Class {class_no(c)} prior marks")
+    if f"parsed_{c}" not in S:
+        st.info(f"Upload the Prior Marks PDF for Class {class_no(c)}.")
+        continue
+    records = S[f"parsed_{c}"].records
+    for w in S[f"parsed_{c}"].warnings:
+        st.warning(w)
+    st.caption(f"{len(records)} prior marks found.")
+    # the editor's base frame only changes on a new PDF; user edits live in the widget state
+    version = S.get(f"editor_version_{c}", 0)
+    if S.get(f"sel_base_version_{c}") != version:
+        S[f"sel_base_{c}"] = selection_df(S[f"selection_{c}"], records)
+        S[f"sel_base_version_{c}"] = version
+    edited = st.data_editor(
+        S[f"sel_base_{c}"],
+        key=f"sel_editor_{c}_{version}",
+        hide_index=True,
+        width="stretch",
+        disabled=["preview", "app_no", "mark", "classes", "flag"],
+        column_config={
+            "include": st.column_config.CheckboxColumn("Include", width="small"),
+            "preview": st.column_config.ImageColumn("Mark", width="small"),
+            "group": st.column_config.NumberColumn("Group", min_value=1, step=1, width="small"),
+            "app_no": "Application No.",
+            "mark": "Name",
+            "classes": "Class",
+            "status": "Status",
+            "flag": "Check",
+        },
+    )
+    S[f"selection_{c}"] = [
+        {k: (int(v) if k == "group" and pd.notna(v) else v) for k, v in row.items() if k != "preview"}
+        for row in edited.to_dict("records")
+    ]
 
 # ---------------- Step 3
 st.header("3 · Word report")
-missing = [m for m, ok in [("class(es) searched", classes), ("mark name", subject_text.strip()),
+no_pdf = [class_no(c) for c in classes if f"parsed_{c}" not in S]
+missing = [m for m, ok in [("mark name", subject_text.strip()),
                            ("intended goods", all(v.strip() for v in intended_goods.values())),
-                           ("Ref. No.", ref_no.strip()), ("Attention", attention.strip())] if not ok]
+                           ("Ref. No.", ref_no.strip()), ("Attention", attention.strip()),
+                           ("Prior Marks PDF for Class " + ", ".join(no_pdf), not no_pdf)] if not ok]
 if missing:
     st.caption("Still to fill in: " + ", ".join(missing))
-if st.button("Build Word report", type="primary", disabled=not classes or not subject_text.strip()):
-    sections = [ClassSection(cls=c, rows=table_rows(records, S.selection, c if multi else None)) for c in classes]
+if st.button("Build Word report", type="primary", disabled=bool(no_pdf) or not subject_text.strip()):
+    sections = [ClassSection(cls=c, rows=table_rows(S[f"parsed_{c}"].records, S[f"selection_{c}"]))
+                for c in classes]
     empty = [class_no(s.cls) for s in sections if not s.rows]
     if empty:
         st.warning("No prior marks in the table for Class " + ", ".join(empty) + ".")
