@@ -88,6 +88,35 @@ SCOPE_TEXT = ("Please note that the above search is conducted on the database pr
               "the search.")
 PART1_REMINDER = "[Write the absolute grounds analysis here]"
 OPINION_REMINDER = "[Write the opinion for Class {cls} here]"
+
+# Singapore reports: same template, with the wording used in QO's SG reports
+SG_FOOTNOTE = ("*Please note that whether an application is accepted/ rejected is ultimately subject to "
+               "the discretion of the examiner, and there will be additional fees to respond to an objection.")
+SG_PART1_INTRO = PART1_INTRO.replace("the question of whether", "the question whether")
+SG_PART1_CLOSE = ("Nevertheless, the decision ultimately lies within the discretion of the Registrar. Please be "
+                  "advised that in the event of an objection or office action, there will be additional fees "
+                  "incurred to respond to the objection.")
+SG_SEARCH_PARA = ("We have completed the search on the above subject mark in {classes} and their related classes "
+                  "in the Trademark Register of Singapore. The search covers registered trademark applications "
+                  "available for public search as of {date}. The search result is summarized below.")
+SG_OPINION_CLOSE = ("Notwithstanding the above, the decision to accept or reject the application ultimately lies "
+                    "within the discretion of the Registrar. Please note that in the event of an objection or "
+                    "office action, additional fees will be incurred to respond accordingly.")
+SG_SCOPE_TEXT = ("Please note that the above search is conducted on the database provided based on the latest "
+                 "records made available to the public at the Registry of Trademark, which may be lacking of a "
+                 "complete list of live trademarks in Singapore. Due to the condition of the records in the "
+                 "database, the search cannot be taken as conclusive. Please do allow room for human errors "
+                 "should any identical or confusingly similar marks have been inadvertently missed out during "
+                 "the search.")
+
+COUNTRY_TEXT = {
+    "MY": {"name": "Malaysia", "footnote": FOOTNOTE, "part1_intro": PART1_INTRO, "part1_close": PART1_CLOSE,
+           "search_para": SEARCH_PARA, "opinion_close": OPINION_CLOSE, "scope_text": SCOPE_TEXT},
+    "SG": {"name": "Singapore", "footnote": SG_FOOTNOTE, "part1_intro": SG_PART1_INTRO,
+           "part1_close": SG_PART1_CLOSE, "search_para": SG_SEARCH_PARA, "opinion_close": SG_OPINION_CLOSE,
+           "scope_text": SG_SCOPE_TEXT},
+}
+
 THANKS = "We thank you for your support and look forward to receiving further instructions on the matter."
 
 
@@ -126,6 +155,7 @@ class ReportData:
     signatory: str = "TAN SIN SU"
     signature_png: bytes | None = None
     company_name: str = "Quality Oracle Sdn Bhd"
+    country: str = "MY"  # "MY" or "SG"
 
 
 # ------------------------------------------------------------------ helpers
@@ -199,6 +229,7 @@ _PPR_AFTER_PBDR = tuple("w:" + t for t in (
 class Builder:
     def __init__(self, data: ReportData):
         self.d = data
+        self.t = COUNTRY_TEXT[data.country]
         self.doc = Document(str(TEMPLATE_PATH))
         self.body = self.doc.element.body
 
@@ -401,7 +432,7 @@ class Builder:
         self._run(p, "RE:", bold=True)
         self._run(p, "\t" + RE_PREFIX, bold=True)
         self._subject(p, bold=True)
-        self._run(p, f"” IN {classes_phrase(self.d.classes).upper()} IN MALAYSIA", bold=True)
+        self._run(p, f"” IN {classes_phrase(self.d.classes).upper()} IN {self.t['name'].upper()}", bold=True)
         self._new_p(ind_left=720, ind_hanging=720)
 
     def summary(self):
@@ -424,7 +455,7 @@ class Builder:
                 p = self._cell_p(cell, before=3, after=3)
                 if i == 0:
                     self._run(p, class_no(c))
-        self.text(FOOTNOTE, bold=True, italic=True)
+        self.text(self.t["footnote"], bold=True, italic=True)
         self._new_p()
         self.text(ASPECTS)
         for label, text in ASPECT_ITEMS:
@@ -438,9 +469,9 @@ class Builder:
         p = self._new_p(line=1.15, keep_next=True)
         self._run(p, PART1_HEADING, bold=True, underline=True)
         p = self._new_p(line=1.15, before=6)
-        self._run(p, PART1_INTRO)
+        self._run(p, self.t["part1_intro"])
         self.staff_space(PART1_REMINDER)
-        self.text(PART1_CLOSE)
+        self.text(self.t["part1_close"])
         self.blank()
 
     def part2(self):
@@ -451,7 +482,7 @@ class Builder:
         self._run(p, PART2_INTRO)
         self.blank()
 
-        before, after = SEARCH_PARA.split("{date}")
+        before, after = self.t["search_para"].split("{date}")
         p = self._new_p(line=1.15)
         self._run(p, before.format(classes=classes_phrase(d.classes, "class")))
         self._date_runs(p, d.search_date)
@@ -482,7 +513,7 @@ class Builder:
         p = self._new_p(line=1.15, keep_next=True)
         self._run(p, "Opinion", bold=True, underline=True)
         self.staff_space(OPINION_REMINDER.format(cls=class_no(sec.cls)))
-        self.text(OPINION_CLOSE)
+        self.text(self.t["opinion_close"])
         self.blank()
 
     def _restarted_num(self, num_id: int) -> int:
@@ -559,7 +590,7 @@ class Builder:
         p = self._new_p(line=1.15, keep_next=True)
         self._run(p, SCOPE_HEADING, bold=True, underline=True)
         p = self._new_p(line=1.15, before=6)
-        self._run(p, SCOPE_TEXT)
+        self._run(p, self.t["scope_text"])
         self.blank()
         self.blank()
         p = self._new_p(line=1.15, keep_next=True)  # keep the thanks line with the signature block
@@ -637,6 +668,6 @@ def build_report(data: ReportData) -> bytes:
     return Builder(data).build()
 
 
-def report_filename(subject_text: str) -> str:
+def report_filename(subject_text: str, country: str = "MY") -> str:
     safe = re.sub(r'[\\/:*?"<>|]+', "", subject_text).strip() or "Mark"
-    return f"[MY] Search Report - {safe}.docx"
+    return f"[{country}] Search Report - {safe}.docx"

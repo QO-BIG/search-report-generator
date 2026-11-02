@@ -17,13 +17,19 @@ A small web app for Quality Oracle staff. Type the client and mark details, uplo
 Left for staff to write in Word: the summary table (only its Class column is filled), the Part I analysis, each Opinion and the
 Similarity column. Red lines in the report show where to write; delete them afterwards.
 
+**Malaysia or Singapore:** choose the country at the top. Malaysia reads MyIPO printouts;
+Singapore reads IPOS Digital Hub printouts ("Details of Trade Mark" pages, printed from the
+browser). The SG report uses the same layout with the wording of QO's SG reports
+(Trademark Register of Singapore, "their related classes", SG Opinion/Part I closings, etc.).
+
 Each searched class has its own Prior Marks PDF, uploaded below that class's intended goods.
 The report has one prior-marks table and Opinion per class (as in past reports), filled from
 that class's PDF. If the PDFs have different print dates, the earliest is used.
 
 ## Files
 - `app.py` – the Streamlit app (password gate, inputs, prior-marks review, download).
-- `parser.py` – reads the Prior Marks PDF (fields and mark images).
+- `parser.py` – reads the MyIPO (Malaysia) Prior Marks PDF (fields and mark images).
+- `parser_sg.py` – reads the IPOS (Singapore) Prior Marks PDF.
 - `report_model.py` – turns the reviewed marks into table rows.
 - `docx_builder.py` – writes the Word report into `assets/template.docx` (QO letterhead).
 

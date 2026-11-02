@@ -21,6 +21,7 @@ from PIL import Image
 
 from docx_builder import ClassSection, ReportData, build_report, class_no, report_filename
 from parser import ParseError, parse_prior_marks
+from parser_sg import parse_prior_marks_sg
 from report_model import initial_selection, salutation_from_attention, table_rows
 
 st.set_page_config(page_title="Search Report Generator", page_icon="📄", layout="wide")
@@ -86,17 +87,17 @@ def selection_df(selection: list[dict], records) -> pd.DataFrame:
     return df[["include", "preview", "group", "app_no", "mark", "classes", "status", "flag"]]
 
 
-def load_prior_marks(c: int, pdf) -> None:
+def load_prior_marks(c: int, pdf, country: str) -> None:
     """Parse the Prior Marks PDF uploaded for class c (once per file); state is kept per class."""
     if pdf is None:
         for k in ("pdf_digest", "parsed", "selection"):
             S.pop(f"{k}_{c}", None)
         return
-    digest = hashlib.sha256(pdf.getvalue()).hexdigest()
+    digest = country + hashlib.sha256(pdf.getvalue()).hexdigest()
     if S.get(f"pdf_digest_{c}") == digest:
         return
     try:
-        parsed = parse_prior_marks(pdf.getvalue())
+        parsed = (parse_prior_marks_sg if country == "SG" else parse_prior_marks)(pdf.getvalue())
     except ParseError as exc:
         st.error(f"Could not read the Prior Marks PDF for Class {class_no(c)}: {exc}")
         return
@@ -116,12 +117,15 @@ def signature_png() -> bytes | None:
 st.title("Search Report Generator")
 st.caption("Fill in the details, upload the Prior Marks PDF for each class, download the Word report. "
            "Nothing is stored; refresh the page to clear.")
+country_label = st.radio("Country", ["Malaysia", "Singapore"], horizontal=True)
+country = "SG" if country_label == "Singapore" else "MY"
+registry = "IPOS" if country == "SG" else "MyIPO"
 
 # ---------------- Step 1
 st.header("1 · Report details")
 c1, c2 = st.columns(2)
 with c1:
-    ref_no = st.text_input("Our Ref. No.", placeholder="TMMYLQOS26xxxxx")
+    ref_no = st.text_input("Our Ref. No.", placeholder=f"TM{country}LQOS26xxxxx")
     letter_date = st.date_input("Report date", value=date.today(), format="DD/MM/YYYY")
     attention = st.text_input("Attention", placeholder="Ros Imanina")
     derived = salutation_from_attention(attention) if attention else ""
@@ -146,8 +150,8 @@ with c2:
     for c in classes:
         intended_goods[c] = st.text_area(f"Intended goods/services – Class {class_no(c)}", key=f"goods_{c}",
                                          height=90)
-        load_prior_marks(c, st.file_uploader(f"Prior Marks PDF – Class {class_no(c)}", type=["pdf"],
-                                             key=f"pdf_{c}"))
+        load_prior_marks(c, st.file_uploader(f"Prior Marks PDF ({registry}) – Class {class_no(c)}", type=["pdf"],
+                                             key=f"pdf_{country}_{c}"), country)
 
 # ---------------- Step 2
 st.header("2 · Prior marks")
@@ -224,11 +228,11 @@ if st.button("Build Word report", type="primary", disabled=bool(no_pdf) or not s
         address_lines=[l for l in address.splitlines() if l.strip()], salutation=S.salutation.strip(),
         subject_text=subject_text.strip(), subject_image=subject_png, classes=classes,
         intended_goods=intended_goods, search_date=search_date, sections=sections,
-        signature_png=signature_png(),
+        signature_png=signature_png(), country=country,
     )
     try:
         S.docx_bytes = build_report(data)
-        S.docx_name = report_filename(subject_text)
+        S.docx_name = report_filename(subject_text, country)
     except Exception as exc:  # noqa: BLE001
         st.error(f"Could not build the report: {type(exc).__name__}: {exc}")
 
