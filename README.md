@@ -25,6 +25,8 @@ browser). The SG report uses the same layout with the wording of QO's SG reports
 Each searched class has its own Prior Marks PDF, uploaded below that class's intended goods.
 The report has one prior-marks table and Opinion per class (as in past reports), filled from
 that class's PDF. If the PDFs have different print dates, the earliest is used.
+For Singapore, a class can have several PDFs (e.g. one per mark, as downloaded from IPOS); they
+are joined in upload order and a mark that appears twice is listed once.
 
 ## Files
 - `app.py` – the Streamlit app (password gate, inputs, prior-marks review, download).

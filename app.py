@@ -21,7 +21,7 @@ from PIL import Image
 
 from docx_builder import ClassSection, ReportData, build_report, class_no, report_filename
 from parser import ParseError, parse_prior_marks
-from parser_sg import parse_prior_marks_sg
+from parser_sg import parse_prior_marks_sg, parse_prior_marks_sg_files
 from report_model import initial_selection, salutation_from_attention, table_rows
 
 st.set_page_config(page_title="Search Report Generator", page_icon="📄", layout="wide")
@@ -107,6 +107,34 @@ def load_prior_marks(c: int, pdf, country: str) -> None:
     S[f"editor_version_{c}"] = S.get(f"editor_version_{c}", 0) + 1
 
 
+def load_prior_marks_sg(c: int, pdfs: list) -> None:
+    """SG: several IPOS PDFs per class, joined in upload order (staff download the marks one by one).
+
+    Adding or removing a file keeps the Include/Status edits of marks already in the table.
+    """
+    if not pdfs:
+        for k in ("pdf_digest", "parsed", "selection"):
+            S.pop(f"{k}_{c}", None)
+        return
+    digest = "SG" + "".join(hashlib.sha256(f.getvalue()).hexdigest() for f in pdfs)
+    if S.get(f"pdf_digest_{c}") == digest:
+        return
+    try:
+        parsed = parse_prior_marks_sg_files([(f.name, f.getvalue()) for f in pdfs])
+    except ParseError as exc:
+        st.error(f"Could not read the Prior Marks PDFs for Class {class_no(c)}: {exc}")
+        return
+    old = {s["app_no"]: s for s in S.get(f"selection_{c}", [])}
+    selection = initial_selection(parsed.records)
+    for s in selection:
+        if s["app_no"] in old:
+            s["include"], s["status"] = old[s["app_no"]]["include"], old[s["app_no"]]["status"]
+    S[f"pdf_digest_{c}"] = digest
+    S[f"parsed_{c}"] = parsed
+    S[f"selection_{c}"] = selection
+    S[f"editor_version_{c}"] = S.get(f"editor_version_{c}", 0) + 1
+
+
 def signature_png() -> bytes | None:
     """Signature from the app secrets (SIGNATURE_PNG_BASE64); None falls back to the local file."""
     b64 = _secret("SIGNATURE_PNG_BASE64")
@@ -150,8 +178,13 @@ with c2:
     for c in classes:
         intended_goods[c] = st.text_area(f"Intended goods/services – Class {class_no(c)}", key=f"goods_{c}",
                                          height=90)
-        load_prior_marks(c, st.file_uploader(f"Prior Marks PDF ({registry}) – Class {class_no(c)}", type=["pdf"],
-                                             key=f"pdf_{country}_{c}"), country)
+        if country == "SG":
+            load_prior_marks_sg(c, st.file_uploader(
+                f"Prior Marks PDFs ({registry}) – Class {class_no(c)} (one or more files)", type=["pdf"],
+                accept_multiple_files=True, key=f"pdf_{country}_{c}"))
+        else:
+            load_prior_marks(c, st.file_uploader(f"Prior Marks PDF ({registry}) – Class {class_no(c)}",
+                                                 type=["pdf"], key=f"pdf_{country}_{c}"), country)
 
 # ---------------- Step 2
 st.header("2 · Prior marks")

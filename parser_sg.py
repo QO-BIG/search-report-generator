@@ -149,3 +149,35 @@ def parse_prior_marks_sg(pdf_bytes: bytes) -> ParseResult:
     if search_date is None:
         warnings.append("Print date not found – please enter the search date manually.")
     return ParseResult(records=records, search_date=search_date, warnings=warnings)
+
+
+def parse_prior_marks_sg_files(files: list[tuple[str, bytes]]) -> ParseResult:
+    """Several IPOS printouts for one class (e.g. one file per mark), joined in upload order.
+
+    A mark found in more than one file is kept once; the earliest print date is the search date.
+    Files that cannot be read are named in the warnings; ParseError only if none can be read.
+    """
+    records: list[PriorMark] = []
+    warnings: list[str] = []
+    dates: list[date] = []
+    seen: set[str] = set()
+    for name, data in files:
+        try:
+            res = parse_prior_marks_sg(data)
+        except ParseError as exc:
+            warnings.append(f"{name}: {exc} This file was skipped.")
+            continue
+        warnings += [w for w in res.warnings if not w.startswith("Print date not found")]
+        if res.search_date:
+            dates.append(res.search_date)
+        for rec in res.records:
+            if rec.app_no in seen:
+                warnings.append(f"{rec.app_no} is in more than one file ({name}); it is listed once.")
+                continue
+            seen.add(rec.app_no)
+            records.append(rec)
+    if not records:
+        raise ParseError(" ".join(warnings) or "No PDF uploaded.")
+    if not dates:
+        warnings.append("Print date not found – please enter the search date manually.")
+    return ParseResult(records=records, search_date=min(dates) if dates else None, warnings=warnings)
