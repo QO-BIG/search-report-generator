@@ -27,6 +27,8 @@ The report has one prior-marks table and Opinion per class (as in past reports),
 that class's PDF. If the PDFs have different print dates, the earliest is used.
 For Singapore, a class can have several PDFs (e.g. one per mark, as downloaded from IPOS); they
 are joined in upload order and a mark that appears twice is listed once.
+Staff can change a mark's **Order** number in the review table to move it; the Word table and the
+joined PDF (downloaded per class as `[SG] Prior Marks Class XX.pdf`) follow that order.
 
 ## Files
 - `app.py` – the Streamlit app (password gate, inputs, prior-marks review, download).

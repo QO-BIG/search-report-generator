@@ -13,6 +13,7 @@ from __future__ import annotations
 import io
 import re
 from collections import Counter
+from dataclasses import dataclass
 from datetime import date
 
 import fitz  # PyMuPDF
@@ -29,8 +30,11 @@ _LOGOGRAM_STATUS_RE = re.compile(r"^Status\s+(?!Date\b|Update\b)(.+)$")
 _PRINTED_RE = re.compile(r"^(\d{1,2})/(\d{1,2})/(\d{2}|\d{4}), \d{1,2}:\d{2}(\s*[AP]M)?$")
 
 
+@dataclass
 class SGPriorMark(PriorMark):
     """IPOS record: every mark is shown as its image; classes as in the SG reports ("03, 05, 44")."""
+
+    source: int = 0  # which uploaded file the record is in (pages are numbered within that file)
 
     @property
     def classes_str(self) -> str:
@@ -161,7 +165,7 @@ def parse_prior_marks_sg_files(files: list[tuple[str, bytes]]) -> ParseResult:
     warnings: list[str] = []
     dates: list[date] = []
     seen: set[str] = set()
-    for name, data in files:
+    for i, (name, data) in enumerate(files):
         try:
             res = parse_prior_marks_sg(data)
         except ParseError as exc:
@@ -175,9 +179,21 @@ def parse_prior_marks_sg_files(files: list[tuple[str, bytes]]) -> ParseResult:
                 warnings.append(f"{rec.app_no} is in more than one file ({name}); it is listed once.")
                 continue
             seen.add(rec.app_no)
+            rec.source = i
             records.append(rec)
     if not records:
         raise ParseError(" ".join(warnings) or "No PDF uploaded.")
     if not dates:
         warnings.append("Print date not found – please enter the search date manually.")
     return ParseResult(records=records, search_date=min(dates) if dates else None, warnings=warnings)
+
+
+def merge_prior_marks_pdfs(files: list[bytes], records: list[SGPriorMark]) -> bytes:
+    """One PDF with each mark's pages in the order of the records (the review table's order)."""
+    out = fitz.open()
+    opened: dict[int, fitz.Document] = {}
+    for rec in records:
+        if rec.source not in opened:
+            opened[rec.source] = fitz.open(stream=files[rec.source], filetype="pdf")
+        out.insert_pdf(opened[rec.source], from_page=rec.pages[0], to_page=rec.pages[-1])
+    return out.tobytes(garbage=3, deflate=True)

@@ -21,7 +21,7 @@ from PIL import Image
 
 from docx_builder import ClassSection, ReportData, build_report, class_no, report_filename
 from parser import ParseError, parse_prior_marks
-from parser_sg import parse_prior_marks_sg, parse_prior_marks_sg_files
+from parser_sg import merge_prior_marks_pdfs, parse_prior_marks_sg, parse_prior_marks_sg_files
 from report_model import initial_selection, salutation_from_attention, table_rows
 
 st.set_page_config(page_title="Search Report Generator", page_icon="📄", layout="wide")
@@ -84,7 +84,29 @@ def parse_classes(text: str) -> list[int]:
 def selection_df(selection: list[dict], records) -> pd.DataFrame:
     df = pd.DataFrame(selection)
     df.insert(1, "preview", [thumb_data_url(None if r.is_word_mark else r.image_png) for r in records])
-    return df[["include", "preview", "group", "app_no", "mark", "classes", "status", "flag"]]
+    order = ["order"] if "order" in df else []  # SG only
+    return df[order + ["include", "preview", "group", "app_no", "mark", "classes", "status", "flag"]]
+
+
+def moved_order(orders: list) -> list[int]:
+    """Row positions after the Order edits: each changed row moves to the number typed, the rest keep
+    their order around it (blank = last)."""
+    n = len(orders)
+    target = {i: n if pd.isna(o) else min(max(int(o), 1), n) for i, o in enumerate(orders) if o != i + 1}
+    rows = [i for i in range(n) if i not in target]
+    for i in sorted(target, key=lambda i: (target[i], i)):
+        rows.insert(target[i] - 1, i)
+    return rows
+
+
+def set_order(c: int, positions: list[int]) -> None:
+    """Put class c's marks (records and table rows) in the given order and renumber the Order column."""
+    parsed = S[f"parsed_{c}"]
+    parsed.records = [parsed.records[i] for i in positions]
+    selection = [S[f"selection_{c}"][i] for i in positions]
+    for n, s in enumerate(selection, start=1):
+        s["order"] = n
+    S[f"selection_{c}"] = selection
 
 
 def load_prior_marks(c: int, pdf, country: str) -> None:
@@ -110,10 +132,11 @@ def load_prior_marks(c: int, pdf, country: str) -> None:
 def load_prior_marks_sg(c: int, pdfs: list) -> None:
     """SG: several IPOS PDFs per class, joined in upload order (staff download the marks one by one).
 
-    Adding or removing a file keeps the Include/Status edits of marks already in the table.
+    Adding or removing a file keeps the Include/Status edits and the order of marks already in the
+    table; marks from new files go to the end.
     """
     if not pdfs:
-        for k in ("pdf_digest", "parsed", "selection"):
+        for k in ("pdf_digest", "parsed", "selection", "merged_pdf", "merged_pdf_key"):
             S.pop(f"{k}_{c}", None)
         return
     digest = "SG" + "".join(hashlib.sha256(f.getvalue()).hexdigest() for f in pdfs)
@@ -125,6 +148,7 @@ def load_prior_marks_sg(c: int, pdfs: list) -> None:
         st.error(f"Could not read the Prior Marks PDFs for Class {class_no(c)}: {exc}")
         return
     old = {s["app_no"]: s for s in S.get(f"selection_{c}", [])}
+    old_pos = {no: i for i, no in enumerate(old)}
     selection = initial_selection(parsed.records)
     for s in selection:
         if s["app_no"] in old:
@@ -133,6 +157,16 @@ def load_prior_marks_sg(c: int, pdfs: list) -> None:
     S[f"parsed_{c}"] = parsed
     S[f"selection_{c}"] = selection
     S[f"editor_version_{c}"] = S.get(f"editor_version_{c}", 0) + 1
+    set_order(c, sorted(range(len(selection)), key=lambda i: (old_pos.get(selection[i]["app_no"], len(old)), i)))
+
+
+def merged_pdf_sg(c: int, pdfs: list) -> bytes:
+    """The combined Prior Marks PDF for class c, in the table's order (rebuilt only when that changes)."""
+    key = (S[f"pdf_digest_{c}"], tuple(r.app_no for r in S[f"parsed_{c}"].records))
+    if S.get(f"merged_pdf_key_{c}") != key:
+        S[f"merged_pdf_{c}"] = merge_prior_marks_pdfs([f.getvalue() for f in pdfs], S[f"parsed_{c}"].records)
+        S[f"merged_pdf_key_{c}"] = key
+    return S[f"merged_pdf_{c}"]
 
 
 def signature_png() -> bytes | None:
@@ -179,9 +213,13 @@ with c2:
         intended_goods[c] = st.text_area(f"Intended goods/services – Class {class_no(c)}", key=f"goods_{c}",
                                          height=90)
         if country == "SG":
-            load_prior_marks_sg(c, st.file_uploader(
-                f"Prior Marks PDFs ({registry}) – Class {class_no(c)} (one or more files)", type=["pdf"],
-                accept_multiple_files=True, key=f"pdf_{country}_{c}"))
+            pdfs = st.file_uploader(f"Prior Marks PDFs ({registry}) – Class {class_no(c)} (one or more files)",
+                                    type=["pdf"], accept_multiple_files=True, key=f"pdf_{country}_{c}")
+            load_prior_marks_sg(c, pdfs)
+            if pdfs and f"parsed_{c}" in S:
+                st.download_button(f"Download combined Prior Marks PDF – Class {class_no(c)}", merged_pdf_sg(c, pdfs),
+                                   file_name=f"[SG] Prior Marks Class {class_no(c)}.pdf", mime="application/pdf",
+                                   key=f"merged_dl_{c}")
         else:
             load_prior_marks(c, st.file_uploader(f"Prior Marks PDF ({registry}) – Class {class_no(c)}",
                                                  type=["pdf"], key=f"pdf_{country}_{c}"), country)
@@ -203,7 +241,9 @@ search_date = st.date_input("Search date (taken from 'Date Printed' in the PDFs)
 if len(set(printed)) > 1:
     st.warning("The PDFs have different print dates; the earliest is used. Change it above if needed.")
 st.caption("Untick **Include** to leave a mark out. Marks with the same **Group** number share one merged "
-           "table row (a series of the same mark). You can correct the Status if needed.")
+           "table row (a series of the same mark). You can correct the Status if needed."
+           + (" Change a mark's **Order** number to move it (the Word table and combined PDF follow this order)."
+              if country == "SG" else ""))
 
 for c in classes:
     st.subheader(f"Class {class_no(c)} prior marks")
@@ -226,6 +266,7 @@ for c in classes:
         width="stretch",
         disabled=["preview", "app_no", "mark", "classes", "flag"],
         column_config={
+            "order": st.column_config.NumberColumn("Order", min_value=1, step=1, width="small"),
             "include": st.column_config.CheckboxColumn("Include", width="small"),
             "preview": st.column_config.ImageColumn("Mark", width="small"),
             "group": st.column_config.NumberColumn("Group", min_value=1, step=1, width="small"),
@@ -240,6 +281,12 @@ for c in classes:
         {k: (int(v) if k == "group" and pd.notna(v) else v) for k, v in row.items() if k != "preview"}
         for row in edited.to_dict("records")
     ]
+    if country == "SG":
+        positions = moved_order([s.get("order") for s in S[f"selection_{c}"]])
+        if positions != list(range(len(positions))):
+            set_order(c, positions)
+            S[f"editor_version_{c}"] += 1
+            st.rerun()
 
 # ---------------- Step 3
 st.header("3 · Word report")
